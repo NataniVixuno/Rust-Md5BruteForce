@@ -48,13 +48,24 @@ fn main() {
 
     let check_all_lengths = get_yes_no_input("Should I check all password lengths from 1 to the maximum length?");
 
+    // Calculate and display thread count
+    let thread_count = charset.chars().count();
+    println!("\n⚠️  WARNING: This will spawn {} thread{} (one per character in the charset).", 
+             thread_count,
+             if thread_count == 1 { "" } else { "s" });
+    println!("   Expect severely degraded system performance - this will DEVOUR your CPU! 🔥");
+    println!("   Press Ctrl+C to cancel if needed.\n");
+
+    // Convert hash from hex string to bytes once for faster comparison
+    let hash_bytes = hex_string_to_bytes(&hash).expect("Invalid hash format");
+    
     let start_time = Instant::now();
     let found_password = if check_all_lengths {
         // Check all lengths from 1 to max_length
         let mut result = None;
         for length in 1..=max_length {
-            println!("\nChecking passwords of length {}...", length);
-            result = brute_force_md5_multithreaded(charset, length, &hash);
+            println!("\nChecking passwords of length {} ({} threads)...", length, thread_count);
+            result = brute_force_md5_multithreaded(charset, length, &hash_bytes);
             if result.is_some() {
                 break;
             }
@@ -62,7 +73,8 @@ fn main() {
         result
     } else {
         // Only check max_length
-        brute_force_md5_multithreaded(charset, max_length, &hash)
+        println!("\nStarting brute force with {} threads...", thread_count);
+        brute_force_md5_multithreaded(charset, max_length, &hash_bytes)
     };
 
     let elapsed_time = start_time.elapsed();
@@ -86,7 +98,26 @@ fn main() {
     );
 }
 
-fn brute_force_md5_multithreaded(charset: &str, length: usize, hash: &str) -> Option<String> {
+// Convert hex string to bytes (e.g., "a1b2" -> [0xa1, 0xb2])
+fn hex_string_to_bytes(hex: &str) -> Result<[u8; 16], ()> {
+    if hex.len() != 32 {
+        return Err(());
+    }
+    let mut bytes = [0u8; 16];
+    for (i, chunk) in hex.as_bytes().chunks(2).enumerate() {
+        if chunk.len() != 2 {
+            return Err(());
+        }
+        let byte = u8::from_str_radix(
+            std::str::from_utf8(chunk).map_err(|_| ())?,
+            16
+        ).map_err(|_| ())?;
+        bytes[i] = byte;
+    }
+    Ok(bytes)
+}
+
+fn brute_force_md5_multithreaded(charset: &str, length: usize, hash_bytes: &[u8; 16]) -> Option<String> {
     let charset_vec: Vec<char> = charset.chars().collect();
     
     // Shared state for cancellation and attempts tracking
@@ -103,18 +134,18 @@ fn brute_force_md5_multithreaded(charset: &str, length: usize, hash: &str) -> Op
     
     for (char_idx, &first_char) in charset_vec.iter().enumerate() {
         let charset_clone = charset.to_string();
-        let hash_clone = hash.to_string();
         let found_flag_clone = Arc::clone(&found_flag);
         let total_attempts_clone = Arc::clone(&total_attempts);
         let start_time_clone = Arc::clone(&start_time);
         let last_update_clone = Arc::clone(&last_update);
         let tx_clone = tx.clone();
         
+        let hash_bytes_clone = *hash_bytes;
         let handle = thread::spawn(move || {
             brute_force_md5_single_thread(
                 &charset_clone,
                 length,
-                &hash_clone,
+                &hash_bytes_clone,
                 first_char,
                 char_idx,
                 found_flag_clone,
@@ -174,7 +205,7 @@ fn brute_force_md5_multithreaded(charset: &str, length: usize, hash: &str) -> Op
 fn brute_force_md5_single_thread(
     charset: &str,
     length: usize,
-    hash: &str,
+    hash_bytes: &[u8; 16],
     first_char: char,
     char_idx: usize,
     found_flag: Arc<AtomicBool>,
@@ -185,19 +216,27 @@ fn brute_force_md5_single_thread(
 ) {
     const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
     
+    // Pre-compute charset as Vec<char> for faster access
+    let charset_vec: Vec<char> = charset.chars().collect();
+    let charset_len = charset_vec.len();
+    
+    // Pre-allocate password buffers to avoid repeated allocations
+    let mut password_buf = Vec::with_capacity(length);
+    password_buf.push(first_char);
+    password_buf.resize(length, ' '); // Fill with placeholder
+    let mut password_bytes_buf = Vec::with_capacity(length); // Reusable buffer for bytes
+    
     // If length is 1, just check the single character
     if length == 1 {
-        let password = first_char.to_string();
-        let hashed = format!("{:x}", md5::compute(password.as_bytes()));
-        
+        let digest = md5::compute(&[first_char as u8]);
         {
             let mut attempts = total_attempts.lock().unwrap();
             *attempts += 1;
         }
         
-        if hashed == hash && !found_flag.load(Ordering::Relaxed) {
+        if digest.0 == *hash_bytes && !found_flag.load(Ordering::Relaxed) {
             found_flag.store(true, Ordering::Relaxed);
-            let _ = result_tx.send(password);
+            let _ = result_tx.send(first_char.to_string());
             return;
         }
         return;
@@ -206,7 +245,6 @@ fn brute_force_md5_single_thread(
     // For length > 1, fix the first character and check remaining positions
     let remaining_length = length - 1;
     let mut current: Vec<usize> = vec![0; remaining_length];
-    let charset_len = charset.len();
     let mut local_attempts = 0u64;
     
     loop {
@@ -218,12 +256,31 @@ fn brute_force_md5_single_thread(
             return;
         }
         
-        // Build password with fixed first character
-        let mut password = first_char.to_string();
-        password.extend(current.iter().map(|&idx| charset.chars().nth(idx).unwrap()));
+        // Build password in pre-allocated buffer (reuse allocation)
+        password_buf[0] = first_char;
+        for (i, &idx) in current.iter().enumerate() {
+            password_buf[i + 1] = charset_vec[idx];
+        }
         
-        let hashed = format!("{:x}", md5::compute(password.as_bytes()));
+        // Convert to bytes in reusable buffer and compute MD5 (faster than allocating new Vec)
+        password_bytes_buf.clear();
+        password_bytes_buf.extend(password_buf.iter().take(length).map(|&c| c as u8));
+        let digest = md5::compute(&password_bytes_buf);
         local_attempts += 1;
+        
+        // Compare digest bytes directly (much faster than hex string comparison)
+        if digest.0 == *hash_bytes && !found_flag.load(Ordering::Relaxed) {
+            // Reconstruct password string only when found
+            let password: String = password_buf.iter().take(length).collect();
+            // Add remaining attempts before exiting
+            {
+                let mut attempts = total_attempts.lock().unwrap();
+                *attempts += local_attempts;
+            }
+            found_flag.store(true, Ordering::Relaxed);
+            let _ = result_tx.send(password);
+            return;
+        }
         
         // Update global attempts counter periodically
         if local_attempts % 1000 == 0 {
@@ -239,29 +296,20 @@ fn brute_force_md5_single_thread(
                 let elapsed = start_time_guard.elapsed();
                 let attempts_total = *attempts;
                 let hashes_per_second = attempts_total as f64 / elapsed.as_secs_f64();
+                // Reconstruct password string only for display
+                let password_display: String = password_buf.iter().take(length).collect();
                 println!(
                     "[Update] Length {} | Thread {} ({}) | Attempts: {} | Current: {} | Speed: {} hashes/sec | Elapsed: {:.2}s",
                     length,
                     char_idx,
                     first_char,
                     format_number(attempts_total),
-                    password,
+                    password_display,
                     format_float(hashes_per_second),
                     elapsed.as_secs_f64()
                 );
                 *last_update_guard = now;
             }
-        }
-        
-        if hashed == hash && !found_flag.load(Ordering::Relaxed) {
-            // Add remaining attempts before returning
-            {
-                let mut attempts = total_attempts.lock().unwrap();
-                *attempts += local_attempts;
-            }
-            found_flag.store(true, Ordering::Relaxed);
-            let _ = result_tx.send(password);
-            return;
         }
         
         // Increment to next combination
