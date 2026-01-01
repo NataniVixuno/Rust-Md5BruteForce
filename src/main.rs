@@ -5,8 +5,11 @@ use md5;
 const DEFAULT_CHARSET: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 fn main() {
-    println!("Written by Crybik");
+    println!("Originally written by Crybik");
     println!("GitHub: https://github.com/crybik\n");
+    println!("Modified and maintained by Natani Vixuno");
+    println!("Github: https://github.com/NataniVixuno\n");
+
 
     println!("What's the hash you want to crack?");
     let mut hash = String::new();
