@@ -5,7 +5,7 @@ use std::time::{Instant, Duration};
 use std::io;
 use md5;
 use format_helpers::{format_number, format_float};
-use cracking_helpers::is_valid_md5_hash;
+use cracking_helpers::{is_valid_md5_hash, get_yes_no_input};
 
 const DEFAULT_CHARSET: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -44,11 +44,32 @@ fn main() {
     io::stdin().read_line(&mut max_length_input).expect("Failed to read input");
     let max_length: usize = max_length_input.trim().parse().unwrap_or(7);
 
+    let check_all_lengths = get_yes_no_input("Should I check all password lengths from 1 to the maximum length?");
+
     let start_time = Instant::now();
-    let found_password = brute_force_md5(charset, max_length, &hash);
+    let found_password = if check_all_lengths {
+        // Check all lengths from 1 to max_length
+        let mut result = None;
+        for length in 1..=max_length {
+            println!("\nChecking passwords of length {}...", length);
+            result = brute_force_md5(charset, length, &hash);
+            if result.is_some() {
+                break;
+            }
+        }
+        result
+    } else {
+        // Only check max_length
+        brute_force_md5(charset, max_length, &hash)
+    };
 
     let elapsed_time = start_time.elapsed();
-    let total_combinations = count_combinations(charset, max_length);
+    let total_combinations = if check_all_lengths {
+        // Sum combinations for all lengths from 1 to max_length
+        (1..=max_length).map(|len| count_combinations(charset, len)).sum::<u64>()
+    } else {
+        count_combinations(charset, max_length)
+    };
     let hashes_per_second = total_combinations as f64 / elapsed_time.as_secs_f64();
 
     match found_password {
@@ -63,8 +84,8 @@ fn main() {
     );
 }
 
-fn brute_force_md5(charset: &str, max_length: usize, hash: &str) -> Option<String> {
-    let mut current: Vec<usize> = vec![0; max_length];
+fn brute_force_md5(charset: &str, length: usize, hash: &str) -> Option<String> {
+    let mut current: Vec<usize> = vec![0; length];
     let charset_len = charset.len();
     let mut attempts: u64 = 0;
     let start_time = Instant::now();
@@ -85,7 +106,8 @@ fn brute_force_md5(charset: &str, max_length: usize, hash: &str) -> Option<Strin
             let elapsed = start_time.elapsed();
             let hashes_per_second = attempts as f64 / elapsed.as_secs_f64();
             println!(
-                "[Update] Attempts: {} | Current: {} | Speed: {} hashes/sec | Elapsed: {:.2}s",
+                "[Update] Length {} | Attempts: {} | Current: {} | Speed: {} hashes/sec | Elapsed: {:.2}s",
+                length,
                 format_number(attempts),
                 password,
                 format_float(hashes_per_second),
@@ -94,7 +116,7 @@ fn brute_force_md5(charset: &str, max_length: usize, hash: &str) -> Option<Strin
             last_update = Instant::now();
         }
 
-        let mut index = max_length - 1;
+        let mut index = length - 1;
         loop {
             if current[index] < charset_len - 1 {
                 current[index] += 1;
