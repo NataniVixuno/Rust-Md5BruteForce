@@ -1,6 +1,9 @@
+mod format_helpers;
+
 use std::time::{Instant, Duration};
 use std::io;
 use md5;
+use format_helpers::{format_number, format_float};
 
 const DEFAULT_CHARSET: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -43,9 +46,9 @@ fn main() {
     }
 
     println!(
-        "Cracking completed in {:.2} seconds. Speed: {:.2} hashes/sec",
+        "Cracking completed in {:.2} seconds. Speed: {} hashes/sec",
         elapsed_time.as_secs_f64(),
-        hashes_per_second
+        format_float(hashes_per_second)
     );
 }
 
@@ -66,15 +69,15 @@ fn brute_force_md5(charset: &str, max_length: usize, hash: &str) -> Option<Strin
             return Some(password);
         }
 
-        // Print update every 5 seconds
+        // Print update every second
         if last_update.elapsed() >= UPDATE_INTERVAL {
             let elapsed = start_time.elapsed();
             let hashes_per_second = attempts as f64 / elapsed.as_secs_f64();
             println!(
-                "[Update] Attempts: {} | Current: {} | Speed: {:.2} hashes/sec | Elapsed: {:.2}s",
-                attempts,
+                "[Update] Attempts: {} | Current: {} | Speed: {} hashes/sec | Elapsed: {:.2}s",
+                format_number(attempts),
                 password,
-                hashes_per_second,
+                format_float(hashes_per_second),
                 elapsed.as_secs_f64()
             );
             last_update = Instant::now();
