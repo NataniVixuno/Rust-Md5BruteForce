@@ -1,9 +1,11 @@
 mod format_helpers;
+mod cracking_helpers;
 
 use std::time::{Instant, Duration};
 use std::io;
 use md5;
 use format_helpers::{format_number, format_float};
+use cracking_helpers::is_valid_md5_hash;
 
 const DEFAULT_CHARSET: &str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -14,10 +16,19 @@ fn main() {
     println!("Github: https://github.com/NataniVixuno\n");
 
 
-    println!("What's the hash you want to crack?");
-    let mut hash = String::new();
-    io::stdin().read_line(&mut hash).expect("Failed to read input");
-    let hash = hash.trim();
+    let hash = loop {
+        println!("What's the hash you want to crack?");
+        let mut hash_input = String::new();
+        io::stdin().read_line(&mut hash_input).expect("Failed to read input");
+        let hash = hash_input.trim();
+        
+        if is_valid_md5_hash(hash) {
+            break hash.to_string();
+        } else {
+            println!("Invalid MD5 hash! MD5 hashes must be exactly 32 hexadecimal characters (0-9, a-f, A-F).");
+            println!("Please try again.\n");
+        }
+    };
 
     println!("Enter the charset (leave blank for default alphanumeric characters):");
     let mut charset_input = String::new();
@@ -34,7 +45,7 @@ fn main() {
     let max_length: usize = max_length_input.trim().parse().unwrap_or(7);
 
     let start_time = Instant::now();
-    let found_password = brute_force_md5(charset, max_length, hash);
+    let found_password = brute_force_md5(charset, max_length, &hash);
 
     let elapsed_time = start_time.elapsed();
     let total_combinations = count_combinations(charset, max_length);
