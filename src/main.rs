@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::time::{Instant, Duration};
 use std::io;
 use md5;
 
@@ -52,13 +52,32 @@ fn main() {
 fn brute_force_md5(charset: &str, max_length: usize, hash: &str) -> Option<String> {
     let mut current: Vec<usize> = vec![0; max_length];
     let charset_len = charset.len();
+    let mut attempts: u64 = 0;
+    let start_time = Instant::now();
+    let mut last_update = Instant::now();
+    const UPDATE_INTERVAL: Duration = Duration::from_secs(1);
 
     loop {
         let password: String = current.iter().map(|&idx| charset.chars().nth(idx).unwrap()).collect();
         let hashed = format!("{:x}", md5::compute(password.as_bytes()));
+        attempts += 1;
 
         if hashed == hash {
             return Some(password);
+        }
+
+        // Print update every 5 seconds
+        if last_update.elapsed() >= UPDATE_INTERVAL {
+            let elapsed = start_time.elapsed();
+            let hashes_per_second = attempts as f64 / elapsed.as_secs_f64();
+            println!(
+                "[Update] Attempts: {} | Current: {} | Speed: {:.2} hashes/sec | Elapsed: {:.2}s",
+                attempts,
+                password,
+                hashes_per_second,
+                elapsed.as_secs_f64()
+            );
+            last_update = Instant::now();
         }
 
         let mut index = max_length - 1;
